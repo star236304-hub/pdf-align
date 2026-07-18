@@ -488,8 +488,15 @@
       <div class="stat"><span class="num mono" id="statTime">0s</span><span class="lbl">처리 시간</span></div>
     </div>
     <div class="btn-row">
-      <button class="btn btn-primary" id="downloadPdfBtn">PDF 다운로드</button>
+      <button class="btn btn-primary" id="downloadPdfBtn">PDF 만들기</button>
       <button class="btn btn-secondary" id="downloadPngBtn" style="display:none;">이미지로 저장</button>
+    </div>
+    <a id="downloadPdfLink" class="btn btn-primary" style="display:none; width:100%; margin-top:10px; text-decoration:none;"
+       download="output.pdf" target="_blank" rel="noopener">⬇ 여기를 탭해서 PDF 저장</a>
+    <a id="previewPdfLink" class="btn btn-secondary" style="display:none; width:100%; margin-top:8px; text-decoration:none;"
+       target="_blank" rel="noopener">↗ 저장이 안 되면 여기서 새 탭으로 열기</a>
+    <div id="downloadHint" style="display:none; font-size:12px; color:var(--muted); margin-top:8px; text-align:center;">
+      자동으로 저장되지 않으면 바로 위 버튼을 직접 탭해 주세요. 새 탭에서 PDF가 열리면 공유/저장 아이콘으로 저장할 수 있습니다.
     </div>
   </div>
 
@@ -508,23 +515,19 @@
   // ---------------------------------------------------------------
   // PDF.js worker setup
   //
-  // We point workerSrc directly at the CDN file. In some restricted
-  // WebViews (e.g. in-app previews) creating a real Worker from a
-  // cross-origin script isn't possible, and pdf.js quietly falls back
-  // to running on the main thread instead ("fake worker") — this only
-  // logs a console warning and does not affect correctness. An earlier
-  // version of this file tried to work around that warning by loading
-  // the worker as a blob: URL, but some in-app WebViews intercept
-  // blob: URLs and rewrite them to a scheme that can't be loaded at
-  // all, turning a harmless warning into a hard failure. Using the
-  // direct URL is the more broadly compatible choice.
+  // Restricted in-app browsers (Claude's preview, Documents by Readdle,
+  // etc.) often block creating a real cross-origin Worker OR intercept
+  // blob: URLs, which previously turned a harmless "fake worker" warning
+  // into a hard failure. To be maximally compatible we explicitly tell
+  // pdf.js to run without a worker (disableWorker) so everything happens
+  // on the main thread. This is a little slower but works everywhere and
+  // avoids the worker-loading errors entirely.
   // ---------------------------------------------------------------
-  const PDFJS_WORKER_URL = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
   if (window.pdfjsLib) {
-    pdfjsLib.GlobalWorkerOptions.workerSrc = PDFJS_WORKER_URL;
-    pdfjsLib.disableAutoFetch = true;
-pdfjsLib.disableStream = true;
-pdfjsLib.disableRange = true;
+    try {
+      pdfjsLib.GlobalWorkerOptions.workerSrc =
+        'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+    } catch (e) { /* ignore */ }
   }
   const workerReadyPromise = Promise.resolve();
 
@@ -648,10 +651,6 @@ pdfjsLib.disableRange = true;
     ctx.rotate(angleDeg * Math.PI / 180);
     ctx.drawImage(canvas, -w / 2, -h / 2);
     ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.save?.();
-
-canvas.width = 1;
-canvas.height = 1;
     return out;
   }
 
@@ -795,6 +794,22 @@ canvas.height = 1;
   // ---------------------------------------------------------------
   let cancelRequested = false;
 
+  // iOS/Safari 계열은 canvas 총 픽셀 수에 상한(약 16.7M px)이 있어
+  // 큰 페이지를 높은 DPI로 렌더링하면 빈 canvas가 만들어지며 이후
+  // 연산에서 오류가 난다. 안전한 상한을 두고 초과 시 렌더 배율을 낮춘다.
+  const MAX_CANVAS_PIXELS = 16777216; // 4096 * 4096
+
+  function makeCanvas(w, h){
+    const canvas = document.createElement('canvas');
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) {
+      throw new Error('캔버스를 만들 수 없습니다 (해상도가 너무 높을 수 있습니다). DPI나 업스케일 배율을 낮춰보세요.');
+    }
+    return { canvas, ctx };
+  }
+
   async function processFile(file, opts, onProgress){
     const ext = file.name.split('.').pop().toLowerCase();
     const isPdf = ext === 'pdf';
@@ -802,38 +817,53 @@ canvas.height = 1;
 
     if (isPdf) {
       const buf = await file.arrayBuffer();
-      const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
+      const pdf = await pdfjsLib.getDocument({
+        data: buf,
+        disableWorker: true,
+        isEvalSupported: false
+      }).promise;
       const numPages = pdf.numPages;
       for (let i = 1; i <= numPages; i++) {
         if (cancelRequested) break;
-        const page = await pdf.getPage(i);
-        const unscaled = page.getViewport({ scale: 1 });
-        const renderScale = opts.dpi / 72;
-        const viewport = page.getViewport({ scale: renderScale });
-        const canvas = document.createElement('canvas');
-        canvas.width = Math.round(viewport.width);
-        canvas.height = Math.round(viewport.height);
-        const ctx = canvas.getContext('2d');
-        await page.render({ canvasContext: ctx, viewport }).promise;
+        try {
+          const page = await pdf.getPage(i);
+          const unscaled = page.getViewport({ scale: 1 });
+          let renderScale = opts.dpi / 72;
 
-        let angle = 0;
-        let working = canvas;
-        if (opts.deskew) {
-          angle = computeSkewAngleForCanvas(canvas);
-          working = rotateCanvasFull(canvas, angle);
+          // canvas 픽셀 상한 초과 시 배율 자동 축소
+          let vw = unscaled.width * renderScale;
+          let vh = unscaled.height * renderScale;
+          if (vw * vh > MAX_CANVAS_PIXELS) {
+            const shrink = Math.sqrt(MAX_CANVAS_PIXELS / (vw * vh));
+            renderScale *= shrink;
+          }
+
+          const viewport = page.getViewport({ scale: renderScale });
+          const { canvas, ctx } = makeCanvas(
+            Math.round(viewport.width),
+            Math.round(viewport.height)
+          );
+          await page.render({ canvasContext: ctx, viewport }).promise;
+
+          let angle = 0;
+          let working = canvas;
+          if (opts.deskew) {
+            angle = computeSkewAngleForCanvas(canvas);
+            working = rotateCanvasFull(canvas, angle);
+          }
+          working = scaleCanvas(working, opts.scale);
+          if (opts.enhance) working = enhanceCanvas(working, opts);
+
+          const dataUrl = working.toDataURL('image/jpeg', 0.92);
+          pages.push({ dataUrl, wPt: unscaled.width, hPt: unscaled.height, angle });
+          onProgress(i, numPages, angle, dataUrl);
+        } catch (pageErr) {
+          throw new Error(i + '번째 페이지 처리 중 실패 — ' + describeError(pageErr));
         }
-        working = scaleCanvas(working, opts.scale);
-        if (opts.enhance) working = enhanceCanvas(working, opts);
-
-        const dataUrl = working.toDataURL('image/jpeg', 0.92);
-        pages.push({ dataUrl, wPt: unscaled.width, hPt: unscaled.height, angle });
-        onProgress(i, numPages, angle, dataUrl);
       }
     } else {
       const img = await loadImageFile(file);
-      const canvas = document.createElement('canvas');
-      canvas.width = img.naturalWidth;
-      canvas.height = img.naturalHeight;
+      const { canvas } = makeCanvas(img.naturalWidth, img.naturalHeight);
       canvas.getContext('2d').drawImage(img, 0, 0);
 
       let angle = 0;
@@ -924,14 +954,61 @@ canvas.height = 1;
   let processedPages = null;
   let lastBaseName = 'output';
 
+  function describeError(err){
+    if (!err) return '알 수 없는 오류';
+    if (typeof err === 'string') return err;
+    const name = err.name || 'Error';
+    const msg = err.message || String(err);
+    return name + ': ' + msg;
+  }
+
   function showError(msg){
     errorBox.textContent = msg;
     errorBox.classList.add('show');
+    errorBox.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }
   function clearError(){
     errorBox.classList.remove('show');
     errorBox.textContent = '';
   }
+
+  // 어디서도 잡지 못한 오류를 화면에 표시 (콘솔을 못 보는 앱 내 브라우저 대비)
+  window.addEventListener('error', function(e){
+    showError('예기치 못한 오류: ' + (e && e.message ? e.message : '알 수 없음'));
+  });
+  window.addEventListener('unhandledrejection', function(e){
+    const r = e && e.reason;
+    showError('예기치 못한 오류: ' + describeError(r));
+  });
+
+  // Builds a detailed, copy-pasteable error string: error type, message,
+  // and the first meaningful line of the stack trace so problems can be
+  // pinpointed even when the browser only gives a generic message.
+  function formatError(err){
+    if (!err) return 'Unknown error';
+    if (typeof err === 'string') return err;
+    const name = err.name || 'Error';
+    const msg = err.message || String(err);
+    let where = '';
+    if (err.stack) {
+      const lines = String(err.stack).split('\n').map((s) => s.trim()).filter(Boolean);
+      const site = lines.find((l) => l.includes('.html') || l.includes('scan_aligner') || /:\d+:\d+/.test(l));
+      if (site) where = ' [' + site.slice(0, 140) + ']';
+    }
+    return name + ': ' + msg + where;
+  }
+
+  // Safety net: surface errors that happen outside our own try/catch
+  // blocks (e.g. inside a library's internal async callback) instead of
+  // failing silently with nothing visible on screen.
+  window.addEventListener('error', (event) => {
+    console.error('Uncaught error:', event.error || event.message);
+    showError('예상치 못한 오류: ' + formatError(event.error || event.message));
+  });
+  window.addEventListener('unhandledrejection', (event) => {
+    console.error('Unhandled promise rejection:', event.reason);
+    showError('예상치 못한 오류(비동기): ' + formatError(event.reason));
+  });
 
   function selectFile(file){
     if (!file) return;
@@ -1010,6 +1087,12 @@ canvas.height = 1;
     barFill.style.width = '0%';
     statusText.textContent = '준비 중…';
     countText.textContent = '0 / 0';
+    downloadPdfBtn.style.display = 'inline-flex';
+    downloadPdfBtn.textContent = 'PDF 만들기';
+    downloadPdfLink.style.display = 'none';
+    previewPdfLink.style.display = 'none';
+    downloadHint.style.display = 'none';
+    if (generatedPdfUrl) { URL.revokeObjectURL(generatedPdfUrl); generatedPdfUrl = null; }
 
     await workerReadyPromise;
     statusText.textContent = '처리 중…';
@@ -1066,6 +1149,11 @@ canvas.height = 1;
     statusText.textContent = '취소 중…';
   });
 
+  const downloadPdfLink = $('downloadPdfLink');
+  const previewPdfLink = $('previewPdfLink');
+  const downloadHint = $('downloadHint');
+  let generatedPdfUrl = null;
+
   downloadPdfBtn.addEventListener('click', async () => {
     if (!processedPages || !processedPages.length) return;
     if (!window.jspdf) {
@@ -1077,6 +1165,9 @@ canvas.height = 1;
     downloadPdfBtn.disabled = true;
     downloadPngBtn.disabled = true;
     downloadPdfBtn.textContent = 'PDF 생성 중… 0%';
+    downloadPdfLink.style.display = 'none';
+    previewPdfLink.style.display = 'none';
+    downloadHint.style.display = 'none';
 
     // let the "생성 중" label paint before the heavy synchronous work starts
     await new Promise((r) => setTimeout(r, 30));
@@ -1089,28 +1180,72 @@ canvas.height = 1;
       if (!blob || blob.size === 0) {
         throw new Error('생성된 PDF가 비어 있습니다.');
       }
-      downloadBlob(blob, lastBaseName + '_보정.pdf');
+      const filename = lastBaseName + '_보정.pdf';
+
+      // Blob/ObjectURL을 제대로 지원하지 않는 내장 브라우저가 있어, 링크에는
+      // 데이터를 통째로 담은 data: URI(base64)를 사용한다. Blob 방식보다
+      // 호환성이 더 넓다 (다만 파일이 매우 크면 문자열 변환이 느릴 수 있다).
+      downloadPdfBtn.textContent = 'PDF 인코딩 중…';
+      await new Promise((r) => setTimeout(r, 20));
+      let dataUri;
+      try {
+        dataUri = pdf.output('datauristring');
+      } catch (encErr) {
+        throw new Error('PDF를 저장 가능한 형식으로 변환하지 못했습니다 (파일이 너무 클 수 있습니다): ' + describeError(encErr));
+      }
+
+      if (generatedPdfUrl) URL.revokeObjectURL(generatedPdfUrl);
+      generatedPdfUrl = URL.createObjectURL(blob);
+
+      // 1차 시도: blob 기반 프로그램적 클릭 (일부 브라우저에선 이걸로 충분함)
+      try {
+        const tmpA = document.createElement('a');
+        tmpA.href = generatedPdfUrl;
+        tmpA.download = filename;
+        document.body.appendChild(tmpA);
+        tmpA.click();
+        document.body.removeChild(tmpA);
+      } catch (autoErr) {
+        console.warn('자동 다운로드 시도 실패, 수동 링크로 대체:', autoErr);
+      }
+
+      // 2차 수단: 사용자가 직접 탭하는 실제 링크. href는 data: URI를 사용해
+      // Blob/ObjectURL을 지원하지 않는 웹뷰에서도 열릴 가능성을 높인다.
+      downloadPdfLink.href = dataUri;
+      downloadPdfLink.download = filename;
+      downloadPdfLink.textContent = '⬇ 여기를 탭해서 PDF 저장 (' + (blob.size / 1024 / 1024).toFixed(1) + 'MB)';
+      downloadPdfLink.style.display = 'flex';
+
+      // 3차 수단: download 속성이 아예 무시되는 웹뷰 대비, 속성 없는
+      // 순수 이동 링크도 함께 제공한다.
+      previewPdfLink.href = dataUri;
+      previewPdfLink.style.display = 'flex';
+
+      downloadHint.style.display = 'block';
+      downloadPdfBtn.style.display = 'none';
+
     } catch (err) {
       console.error(err);
       showError(
-        'PDF 다운로드 중 문제가 발생했습니다: ' + (err && err.message ? err.message : String(err)) +
+        'PDF 생성 중 문제가 발생했습니다: ' + describeError(err) +
         ' — 페이지 수나 해상도(DPI)를 낮춰서 다시 시도해 보세요.'
       );
     } finally {
       downloadPdfBtn.disabled = false;
       downloadPngBtn.disabled = false;
-      downloadPdfBtn.textContent = originalLabel;
+      if (downloadPdfBtn.style.display !== 'none') {
+        downloadPdfBtn.textContent = originalLabel;
+      }
     }
   });
 
   downloadPngBtn.addEventListener('click', () => {
     if (!processedPages || !processedPages.length) return;
     try {
-      const res = fetch(processedPages[0].dataUrl)
+      fetch(processedPages[0].dataUrl)
         .then((r) => r.blob())
         .then((blob) => downloadBlob(blob, lastBaseName + '_보정.jpg'))
         .catch(() => {
-          // fallback for browsers where fetch() on a data: URL is restricted
           const a = document.createElement('a');
           a.href = processedPages[0].dataUrl;
           a.download = lastBaseName + '_보정.jpg';
@@ -1120,7 +1255,7 @@ canvas.height = 1;
         });
     } catch (err) {
       console.error(err);
-      showError('이미지 다운로드 중 문제가 발생했습니다: ' + (err && err.message ? err.message : String(err)));
+      showError('이미지 다운로드 중 문제가 발생했습니다: ' + describeError(err));
     }
   });
 
