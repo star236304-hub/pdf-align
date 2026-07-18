@@ -1,0 +1,1123 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>스캔 정렬기 · 기울기 보정 &amp; 화질 개선</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=IBM+Plex+Mono:wght@400;500;600&family=Noto+Sans+KR:wght@400;500;700&display=swap" rel="stylesheet">
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/4.0.0/jspdf.umd.min.js"></script>
+
+<style>
+  :root{
+    --bg: #EEF2F3;
+    --grid-line: rgba(22,32,43,0.055);
+    --panel: #FFFFFF;
+    --ink: #16202B;
+    --muted: #5B6B76;
+    --border: #DCE3E6;
+    --accent: #1F6F78;
+    --accent-dark: #154F56;
+    --accent-soft: #E3EFEE;
+    --amber: #C97A2B;
+    --amber-soft: #FBEEDD;
+    --danger: #B84A3B;
+    --danger-soft: #FBEAE7;
+    --radius: 10px;
+  }
+
+  *{ box-sizing: border-box; }
+
+  html,body{
+    margin:0; padding:0;
+    background:
+      linear-gradient(var(--grid-line) 1px, transparent 1px) 0 0/32px 32px,
+      linear-gradient(90deg, var(--grid-line) 1px, transparent 1px) 0 0/32px 32px,
+      var(--bg);
+    color: var(--ink);
+    font-family: 'Noto Sans KR', -apple-system, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .mono{ font-family:'IBM Plex Mono', monospace; }
+
+  .wrap{
+    max-width: 860px;
+    margin: 0 auto;
+    padding: 40px 20px 80px;
+  }
+
+  /* ---------- Header ---------- */
+  header{
+    display:flex;
+    align-items:center;
+    gap:16px;
+    margin-bottom: 32px;
+  }
+  .logo-mark{
+    flex: 0 0 auto;
+    width:52px; height:52px;
+  }
+  .eyebrow{
+    font-family:'IBM Plex Mono', monospace;
+    font-size: 11px;
+    letter-spacing: 0.14em;
+    color: var(--accent);
+    font-weight:600;
+    margin: 0 0 4px;
+  }
+  h1{
+    font-family:'Space Grotesk', 'Noto Sans KR', sans-serif;
+    font-size: 25px;
+    font-weight: 700;
+    margin: 0 0 4px;
+    letter-spacing: -0.01em;
+  }
+  .subtitle{
+    color: var(--muted);
+    font-size: 14px;
+    margin: 0;
+  }
+
+  /* ---------- Panels ---------- */
+  .panel{
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 24px;
+    margin-bottom: 20px;
+  }
+  .panel h2{
+    font-size: 14px;
+    font-weight: 700;
+    margin: 0 0 16px;
+    display:flex;
+    align-items:center;
+    gap:8px;
+  }
+  .panel h2 .idx{
+    font-family:'IBM Plex Mono', monospace;
+    font-size: 11px;
+    color: var(--accent);
+    border: 1px solid var(--accent);
+    border-radius: 4px;
+    padding: 1px 6px;
+  }
+
+  /* ---------- Dropzone ---------- */
+  #dropzone{
+    border: 1.5px dashed var(--border);
+    border-radius: var(--radius);
+    padding: 36px 20px;
+    text-align:center;
+    cursor:pointer;
+    transition: border-color .15s ease, background .15s ease;
+  }
+  #dropzone.drag{
+    border-color: var(--accent);
+    background: var(--accent-soft);
+  }
+  #dropzone svg{ width:34px; height:34px; color: var(--accent); margin-bottom:10px; }
+  #dropzone .dz-title{ font-weight:700; font-size:15px; margin-bottom:4px; }
+  #dropzone .dz-sub{ color: var(--muted); font-size: 12.5px; }
+  #fileInput{ display:none; }
+
+  #fileInfo{
+    display:none;
+    margin-top:14px;
+    padding: 12px 14px;
+    background: var(--accent-soft);
+    border-radius: 8px;
+    font-size: 13.5px;
+    align-items:center;
+    justify-content:space-between;
+    gap: 10px;
+  }
+  #fileInfo.show{ display:flex; }
+  #fileInfo .fname{ font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  #fileInfo button{
+    background:none; border:none; color:var(--muted); cursor:pointer; font-size:12px;
+    text-decoration:underline; flex:0 0 auto;
+  }
+
+  /* ---------- Settings ---------- */
+  .row{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap: 16px;
+    padding: 11px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .row:last-child{ border-bottom:none; }
+  .row .label{
+    font-size: 13.5px;
+    font-weight: 500;
+  }
+  .row .desc{
+    display:block;
+    font-size: 11.5px;
+    color: var(--muted);
+    font-weight: 400;
+    margin-top: 2px;
+  }
+  .row .control{
+    display:flex;
+    align-items:center;
+    gap:10px;
+    flex: 0 0 auto;
+  }
+  input[type="range"]{
+    width: 140px;
+    accent-color: var(--accent);
+  }
+  .readout{
+    font-family:'IBM Plex Mono', monospace;
+    font-size: 12.5px;
+    min-width: 46px;
+    text-align:right;
+    color: var(--accent-dark);
+    font-weight:600;
+  }
+
+  .switch{
+    position:relative; width:38px; height:22px; flex: 0 0 auto;
+  }
+  .switch input{ opacity:0; width:0; height:0; }
+  .slider-toggle{
+    position:absolute; cursor:pointer; inset:0;
+    background: var(--border); border-radius: 22px;
+    transition: background .15s ease;
+  }
+  .slider-toggle:before{
+    content:""; position:absolute; height:16px; width:16px; left:3px; top:3px;
+    background:white; border-radius:50%; transition: transform .15s ease;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.25);
+  }
+  input:checked + .slider-toggle{ background: var(--accent); }
+  input:checked + .slider-toggle:before{ transform: translateX(16px); }
+
+  details{ margin-top: 4px; }
+  summary{
+    cursor:pointer; font-size:13px; color: var(--accent-dark); font-weight:600;
+    list-style:none; display:flex; align-items:center; gap:6px; padding: 6px 0;
+  }
+  summary::-webkit-details-marker{ display:none; }
+  summary:after{ content:"▾"; font-size:10px; transition: transform .15s ease; }
+  details[open] summary:after{ transform: rotate(180deg); }
+
+  /* ---------- Buttons ---------- */
+  .btn{
+    display:inline-flex; align-items:center; justify-content:center; gap:8px;
+    border-radius: 8px; border: none; cursor:pointer;
+    font-family:'Noto Sans KR', sans-serif; font-weight:700; font-size:14.5px;
+    padding: 13px 22px;
+    transition: background .15s ease, opacity .15s ease, transform .05s ease;
+  }
+  .btn:active{ transform: scale(0.985); }
+  .btn-primary{ background: var(--accent); color:#fff; width:100%; }
+  .btn-primary:hover{ background: var(--accent-dark); }
+  .btn-primary:disabled{ background:#B7C4C6; cursor:not-allowed; }
+  .btn-secondary:disabled{ opacity:0.5; cursor:not-allowed; }
+  .btn-ghost{ background: transparent; color: var(--danger); border:1px solid var(--danger-soft); }
+  .btn-ghost:hover{ background: var(--danger-soft); }
+  .btn-secondary{ background: var(--accent-soft); color: var(--accent-dark); }
+  .btn-secondary:hover{ background: #d3e6e4; }
+
+  /* ---------- Progress ---------- */
+  #progressPanel{ display:none; }
+  #progressPanel.show{ display:block; }
+  .progress-head{
+    display:flex; justify-content:space-between; align-items:baseline; margin-bottom:10px;
+  }
+  .progress-head .status{ font-size:13.5px; font-weight:600; }
+  .progress-head .count{ font-family:'IBM Plex Mono', monospace; font-size:12.5px; color:var(--muted); }
+  .bar-track{
+    width:100%; height:8px; background: var(--border); border-radius:6px; overflow:hidden;
+  }
+  .bar-fill{
+    height:100%; width:0%; background: var(--accent); transition: width .2s ease;
+  }
+
+  .thumb-grid{
+    display:grid;
+    grid-template-columns: repeat(auto-fill, minmax(78px, 1fr));
+    gap: 8px;
+    margin-top: 18px;
+    max-height: 380px;
+    overflow-y:auto;
+    padding-right:4px;
+  }
+  .thumb{
+    position:relative;
+    border-radius:6px;
+    overflow:hidden;
+    border: 1px solid var(--border);
+    background:#fff;
+    aspect-ratio: 3/4.2;
+  }
+  .thumb img{ width:100%; height:100%; object-fit:cover; display:block; }
+  .thumb .badge{
+    position:absolute; left:3px; bottom:3px;
+    font-family:'IBM Plex Mono', monospace;
+    font-size: 9.5px; font-weight:600;
+    padding: 1px 4px; border-radius:4px;
+    background: rgba(255,255,255,0.92);
+    color: var(--muted);
+  }
+  .thumb .badge.tilt{ color: var(--amber); }
+
+  /* ---------- Result ---------- */
+  #resultPanel{ display:none; }
+  #resultPanel.show{ display:block; }
+  .stat-grid{
+    display:grid; grid-template-columns: repeat(3,1fr); gap:10px; margin-bottom:20px;
+  }
+  .stat{
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 10px;
+    text-align:center;
+  }
+  .stat .num{
+    font-family:'IBM Plex Mono', monospace;
+    font-size: 19px; font-weight:600; color: var(--accent-dark);
+    display:block;
+  }
+  .stat .lbl{ font-size:11px; color:var(--muted); margin-top:2px; display:block; }
+
+  .btn-row{ display:flex; gap:10px; }
+  .btn-row .btn{ flex:1; }
+
+  /* ---------- Footer ---------- */
+  footer{
+    margin-top: 30px;
+    font-size: 12px;
+    color: var(--muted);
+    line-height:1.7;
+    text-align:center;
+  }
+  footer strong{ color: var(--ink); }
+
+  #errorBox{
+    display:none;
+    background: var(--danger-soft);
+    border: 1px solid #EFC9C2;
+    color: var(--danger);
+    border-radius: 8px;
+    padding: 12px 14px;
+    font-size: 13px;
+    margin-bottom: 16px;
+  }
+  #errorBox.show{ display:block; }
+
+  @media (max-width: 520px){
+    .row{ flex-direction:column; align-items:flex-start; gap:8px; }
+    .row .control{ width:100%; }
+    input[type="range"]{ width:100%; }
+    .stat-grid{ grid-template-columns: repeat(3,1fr); }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <svg class="logo-mark" viewBox="0 0 52 52" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <path d="M8 40 A18 18 0 0 1 44 40" stroke="#1F6F78" stroke-width="2.5" fill="none"/>
+      <line x1="8" y1="40" x2="44" y2="40" stroke="#1F6F78" stroke-width="2.5"/>
+      <g id="needle-group" transform="rotate(-18 26 40)">
+        <line x1="26" y1="40" x2="26" y2="14" stroke="#C97A2B" stroke-width="2.5" stroke-linecap="round"/>
+        <circle cx="26" cy="40" r="3" fill="#C97A2B"/>
+      </g>
+    </svg>
+    <div>
+      <p class="eyebrow">SCAN ALIGNER</p>
+      <h1>스캔 정렬기</h1>
+      <p class="subtitle">기울어진 스캔 PDF/이미지를 자동으로 정렬하고 화질을 개선합니다</p>
+    </div>
+  </header>
+
+  <div id="errorBox"></div>
+
+  <!-- Step 1: Upload -->
+  <div class="panel">
+    <h2><span class="idx">01</span> 파일 선택</h2>
+    <div id="dropzone">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <div class="dz-title">여기로 파일을 끌어다 놓거나 클릭하세요</div>
+      <div class="dz-sub">PDF, PNG, JPG 지원 · 모든 처리는 이 브라우저 안에서만 이루어집니다</div>
+    </div>
+    <input type="file" id="fileInput" accept=".pdf,image/png,image/jpeg">
+    <div id="fileInfo">
+      <span class="fname mono" id="fileName"></span>
+      <button id="clearFile">지우기</button>
+    </div>
+  </div>
+
+  <!-- Step 2: Settings -->
+  <div class="panel" id="settingsPanel" style="display:none;">
+    <h2><span class="idx">02</span> 보정 설정</h2>
+
+    <div class="row">
+      <div>
+        <div class="label">기울기 자동 보정</div>
+        <span class="desc">텍스트 줄이 가장 수평이 되는 각도를 페이지마다 자동 탐색합니다</span>
+      </div>
+      <div class="control">
+        <label class="switch">
+          <input type="checkbox" id="optDeskew" checked>
+          <span class="slider-toggle"></span>
+        </label>
+      </div>
+    </div>
+
+    <div class="row">
+      <div>
+        <div class="label">화질 개선</div>
+        <span class="desc">노이즈 제거·명료도·선명화를 적용합니다</span>
+      </div>
+      <div class="control">
+        <label class="switch">
+          <input type="checkbox" id="optEnhance" checked>
+          <span class="slider-toggle"></span>
+        </label>
+      </div>
+    </div>
+
+    <details id="advancedDetails">
+      <summary>세부 설정</summary>
+
+      <div class="row">
+        <div>
+          <div class="label">렌더링 해상도 (DPI)</div>
+          <span class="desc">높을수록 선명하지만 처리 시간이 늘어납니다</span>
+        </div>
+        <div class="control">
+          <input type="range" id="optDpi" min="100" max="300" step="25" value="150">
+          <span class="readout mono" id="optDpiVal">150</span>
+        </div>
+      </div>
+
+      <div class="row">
+        <div>
+          <div class="label">업스케일 배율</div>
+          <span class="desc">이미지를 확대해서 저장합니다 (해상도 증가)</span>
+        </div>
+        <div class="control">
+          <input type="range" id="optScale" min="1" max="2" step="0.1" value="1">
+          <span class="readout mono" id="optScaleVal">1.0×</span>
+        </div>
+      </div>
+
+      <div class="row">
+        <div>
+          <div class="label">노이즈 제거</div>
+          <span class="desc">스캔 특유의 잡티를 줄입니다</span>
+        </div>
+        <div class="control">
+          <input type="range" id="optDenoise" min="0" max="1" step="0.1" value="0.4">
+          <span class="readout mono" id="optDenoiseVal">0.4</span>
+        </div>
+      </div>
+
+      <div class="row">
+        <div>
+          <div class="label">명료도 (음영 보정)</div>
+          <span class="desc">복사기 그림자·불균일한 조명을 완화합니다</span>
+        </div>
+        <div class="control">
+          <input type="range" id="optClarity" min="0" max="1" step="0.1" value="0.5">
+          <span class="readout mono" id="optClarityVal">0.5</span>
+        </div>
+      </div>
+
+      <div class="row">
+        <div>
+          <div class="label">선명화</div>
+          <span class="desc">글자 가장자리를 또렷하게 만듭니다</span>
+        </div>
+        <div class="control">
+          <input type="range" id="optSharpen" min="0" max="1" step="0.1" value="0.5">
+          <span class="readout mono" id="optSharpenVal">0.5</span>
+        </div>
+      </div>
+
+      <div class="row">
+        <div>
+          <div class="label">자동 명암 보정</div>
+          <span class="desc">배경을 밝히고 대비를 살립니다</span>
+        </div>
+        <div class="control">
+          <label class="switch">
+            <input type="checkbox" id="optAutoLevels" checked>
+            <span class="slider-toggle"></span>
+          </label>
+        </div>
+      </div>
+    </details>
+
+    <div style="margin-top:20px;">
+      <button class="btn btn-primary" id="startBtn">보정 시작</button>
+    </div>
+  </div>
+
+  <!-- Step 3: Progress -->
+  <div class="panel" id="progressPanel">
+    <h2><span class="idx">03</span> 처리 중</h2>
+    <div class="progress-head">
+      <span class="status" id="statusText">준비 중…</span>
+      <span class="count mono" id="countText">0 / 0</span>
+    </div>
+    <div class="bar-track"><div class="bar-fill" id="barFill"></div></div>
+    <div class="thumb-grid" id="thumbGrid"></div>
+    <div style="margin-top:16px;">
+      <button class="btn btn-ghost" id="cancelBtn" style="width:100%;">취소</button>
+    </div>
+  </div>
+
+  <!-- Step 4: Result -->
+  <div class="panel" id="resultPanel">
+    <h2><span class="idx">04</span> 완료</h2>
+    <div class="stat-grid">
+      <div class="stat"><span class="num mono" id="statPages">0</span><span class="lbl">페이지</span></div>
+      <div class="stat"><span class="num mono" id="statAngle">0.0°</span><span class="lbl">평균 보정각</span></div>
+      <div class="stat"><span class="num mono" id="statTime">0s</span><span class="lbl">처리 시간</span></div>
+    </div>
+    <div class="btn-row">
+      <button class="btn btn-primary" id="downloadPdfBtn">PDF 다운로드</button>
+      <button class="btn btn-secondary" id="downloadPngBtn" style="display:none;">이미지로 저장</button>
+    </div>
+  </div>
+
+  <footer>
+    <strong>모든 처리는 이 기기(브라우저) 안에서만 이루어집니다.</strong><br>
+    파일이 서버로 업로드되지 않으며, 탭을 닫으면 아무 기록도 남지 않습니다.<br>
+    라이브러리 로딩을 위해 최초 접속 시 인터넷 연결이 필요합니다.
+  </footer>
+
+</div>
+
+<script>
+(function(){
+  'use strict';
+
+  // ---------------------------------------------------------------
+  // PDF.js worker setup
+  //
+  // We point workerSrc directly at the CDN file. In some restricted
+  // WebViews (e.g. in-app previews) creating a real Worker from a
+  // cross-origin script isn't possible, and pdf.js quietly falls back
+  // to running on the main thread instead ("fake worker") — this only
+  // logs a console warning and does not affect correctness. An earlier
+  // version of this file tried to work around that warning by loading
+  // the worker as a blob: URL, but some in-app WebViews intercept
+  // blob: URLs and rewrite them to a scheme that can't be loaded at
+  // all, turning a harmless warning into a hard failure. Using the
+  // direct URL is the more broadly compatible choice.
+  // ---------------------------------------------------------------
+  const PDFJS_WORKER_URL = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+  if (window.pdfjsLib) {
+    pdfjsLib.GlobalWorkerOptions.workerSrc = PDFJS_WORKER_URL;
+  }
+  const workerReadyPromise = Promise.resolve();
+
+  // ---------------------------------------------------------------
+  // Skew detection (projection-profile method)
+  // ---------------------------------------------------------------
+  function clamp255(v){ return v < 0 ? 0 : (v > 255 ? 255 : v); }
+
+  function otsuThreshold(hist, total){
+    let sum = 0;
+    for (let i = 0; i < 256; i++) sum += i * hist[i];
+    let sumB = 0, wB = 0, wF = 0, maxVar = 0, threshold = 127;
+    for (let t = 0; t < 256; t++) {
+      wB += hist[t];
+      if (wB === 0) continue;
+      wF = total - wB;
+      if (wF === 0) break;
+      sumB += t * hist[t];
+      const mB = sumB / wB;
+      const mF = (sum - sumB) / wF;
+      const varBetween = wB * wF * (mB - mF) * (mB - mF);
+      if (varBetween > maxVar) { maxVar = varBetween; threshold = t; }
+    }
+    return threshold;
+  }
+
+  function rotateBinary(bin, w, h, angleDeg){
+    const a = angleDeg * Math.PI / 180;
+    const cos = Math.cos(a), sin = Math.sin(a);
+    const cx = w / 2, cy = h / 2;
+    const out = new Uint8Array(w * h);
+    for (let y = 0; y < h; y++) {
+      const dy = y - cy;
+      const rowBase = y * w;
+      for (let x = 0; x < w; x++) {
+        const dx = x - cx;
+        const sx = dx * cos + dy * sin + cx;
+        const sy = -dx * sin + dy * cos + cy;
+        const sxi = (sx + 0.5) | 0, syi = (sy + 0.5) | 0;
+        if (sxi >= 0 && sxi < w && syi >= 0 && syi < h) {
+          out[rowBase + x] = bin[syi * w + sxi];
+        }
+      }
+    }
+    return out;
+  }
+
+  function rowSumVariance(bin, w, h){
+    const sums = new Float64Array(h);
+    for (let y = 0; y < h; y++) {
+      let s = 0;
+      const base = y * w;
+      for (let x = 0; x < w; x++) s += bin[base + x];
+      sums[y] = s;
+    }
+    let mean = 0;
+    for (let y = 0; y < h; y++) mean += sums[y];
+    mean /= h;
+    let variance = 0;
+    for (let y = 0; y < h; y++) variance += (sums[y] - mean) * (sums[y] - mean);
+    return variance / h;
+  }
+
+  function detectSkewAngle(bin, w, h, coarseRange, coarseStep, fineStep){
+    coarseRange = coarseRange || 8;
+    coarseStep = coarseStep || 0.5;
+    fineStep = fineStep || 0.05;
+    let bestAngle = 0, bestScore = -1;
+    for (let a = -coarseRange; a <= coarseRange + 1e-9; a += coarseStep) {
+      const rotated = rotateBinary(bin, w, h, a);
+      const score = rowSumVariance(rotated, w, h);
+      if (score > bestScore) { bestScore = score; bestAngle = a; }
+    }
+    const lo = bestAngle - coarseStep, hi = bestAngle + coarseStep;
+    for (let a = lo; a <= hi + 1e-9; a += fineStep) {
+      const rotated = rotateBinary(bin, w, h, a);
+      const score = rowSumVariance(rotated, w, h);
+      if (score > bestScore) { bestScore = score; bestAngle = a; }
+    }
+    return Math.round(bestAngle * 100) / 100;
+  }
+
+  function computeSkewAngleForCanvas(canvas){
+    const maxDim = 500;
+    const w0 = canvas.width, h0 = canvas.height;
+    const scale = Math.min(1, maxDim / Math.max(w0, h0));
+    const sw = Math.max(1, Math.round(w0 * scale));
+    const sh = Math.max(1, Math.round(h0 * scale));
+    const small = document.createElement('canvas');
+    small.width = sw; small.height = sh;
+    const sctx = small.getContext('2d');
+    sctx.drawImage(canvas, 0, 0, sw, sh);
+    const imgData = sctx.getImageData(0, 0, sw, sh);
+    const d = imgData.data;
+    const gray = new Uint8ClampedArray(sw * sh);
+    for (let i = 0, p = 0; i < d.length; i += 4, p++) {
+      gray[p] = (0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2]) | 0;
+    }
+    const hist = new Array(256).fill(0);
+    for (let i = 0; i < gray.length; i++) hist[gray[i]]++;
+    const total = gray.length;
+    const threshold = otsuThreshold(hist, total);
+    const bin = new Uint8Array(gray.length);
+    let fgCount = 0;
+    for (let i = 0; i < gray.length; i++) {
+      if (gray[i] <= threshold) { bin[i] = 1; fgCount++; }
+    }
+    if (fgCount < Math.max(150, total * 0.003)) return 0; // sparse page guard
+    return detectSkewAngle(bin, sw, sh);
+  }
+
+  function rotateCanvasFull(canvas, angleDeg){
+    if (Math.abs(angleDeg) < 0.05) return canvas;
+    const w = canvas.width, h = canvas.height;
+    const out = document.createElement('canvas');
+    out.width = w; out.height = h;
+    const ctx = out.getContext('2d');
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, w, h);
+    ctx.translate(w / 2, h / 2);
+    ctx.rotate(angleDeg * Math.PI / 180);
+    ctx.drawImage(canvas, -w / 2, -h / 2);
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    return out;
+  }
+
+  // ---------------------------------------------------------------
+  // Enhancement (denoise / clarity / sharpen / auto-levels)
+  // ---------------------------------------------------------------
+  function boxBlurChannel(src, w, h, radius){
+    if (radius <= 0) return Float32Array.from(src);
+    const tmp = new Float32Array(w * h);
+    const rowPrefix = new Float64Array(w + 1);
+    for (let y = 0; y < h; y++) {
+      const off = y * w;
+      rowPrefix[0] = 0;
+      for (let x = 0; x < w; x++) rowPrefix[x + 1] = rowPrefix[x] + src[off + x];
+      for (let x = 0; x < w; x++) {
+        const lo = Math.max(0, x - radius);
+        const hi = Math.min(w - 1, x + radius);
+        tmp[off + x] = (rowPrefix[hi + 1] - rowPrefix[lo]) / (hi - lo + 1);
+      }
+    }
+    const out = new Float32Array(w * h);
+    const colPrefix = new Float64Array(h + 1);
+    for (let x = 0; x < w; x++) {
+      colPrefix[0] = 0;
+      for (let y = 0; y < h; y++) colPrefix[y + 1] = colPrefix[y] + tmp[y * w + x];
+      for (let y = 0; y < h; y++) {
+        const lo = Math.max(0, y - radius);
+        const hi = Math.min(h - 1, y + radius);
+        out[y * w + x] = (colPrefix[hi + 1] - colPrefix[lo]) / (hi - lo + 1);
+      }
+    }
+    return out;
+  }
+
+  function enhanceCanvas(canvas, opts){
+    const w = canvas.width, h = canvas.height;
+    const ctx = canvas.getContext('2d');
+    const imgData = ctx.getImageData(0, 0, w, h);
+    const data = imgData.data;
+    const n = w * h;
+
+    const R = new Float32Array(n), G = new Float32Array(n), B = new Float32Array(n);
+    for (let i = 0, p = 0; i < data.length; i += 4, p++) {
+      R[p] = data[i]; G[p] = data[i + 1]; B[p] = data[i + 2];
+    }
+
+    if (opts.denoise > 0) {
+      const Rb = boxBlurChannel(R, w, h, 1);
+      const Gb = boxBlurChannel(G, w, h, 1);
+      const Bb = boxBlurChannel(B, w, h, 1);
+      const amt = opts.denoise;
+      for (let p = 0; p < n; p++) {
+        R[p] = R[p] * (1 - amt) + Rb[p] * amt;
+        G[p] = G[p] * (1 - amt) + Gb[p] * amt;
+        B[p] = B[p] * (1 - amt) + Bb[p] * amt;
+      }
+    }
+
+    if (opts.clarity > 0) {
+      const luma = new Float32Array(n);
+      for (let p = 0; p < n; p++) luma[p] = 0.299 * R[p] + 0.587 * G[p] + 0.114 * B[p];
+      const radius = Math.max(8, Math.round(Math.min(w, h) / 18));
+      const lumaBlur = boxBlurChannel(luma, w, h, radius);
+      const amt = opts.clarity * 0.8;
+      for (let p = 0; p < n; p++) {
+        const detail = luma[p] - lumaBlur[p];
+        const newLuma = luma[p] + amt * detail;
+        const ratio = luma[p] > 1 ? newLuma / luma[p] : 1;
+        R[p] = clamp255(R[p] * ratio);
+        G[p] = clamp255(G[p] * ratio);
+        B[p] = clamp255(B[p] * ratio);
+      }
+    }
+
+    if (opts.sharpen > 0) {
+      const Rb = boxBlurChannel(R, w, h, 1);
+      const Gb = boxBlurChannel(G, w, h, 1);
+      const Bb = boxBlurChannel(B, w, h, 1);
+      const amt = opts.sharpen * 1.2;
+      for (let p = 0; p < n; p++) {
+        R[p] = clamp255(R[p] + amt * (R[p] - Rb[p]));
+        G[p] = clamp255(G[p] + amt * (G[p] - Gb[p]));
+        B[p] = clamp255(B[p] + amt * (B[p] - Bb[p]));
+      }
+    }
+
+    if (opts.autoLevels) {
+      const luma = new Uint8ClampedArray(n);
+      for (let p = 0; p < n; p++) luma[p] = 0.299 * R[p] + 0.587 * G[p] + 0.114 * B[p];
+      const hist = new Array(256).fill(0);
+      for (let p = 0; p < n; p++) hist[luma[p]]++;
+      let cum = 0, lo = 0, hi = 255;
+      const lowCut = n * 0.01, highCut = n * 0.01;
+      for (let v = 0; v < 256; v++) { cum += hist[v]; if (cum >= lowCut) { lo = v; break; } }
+      cum = 0;
+      for (let v = 255; v >= 0; v--) { cum += hist[v]; if (cum >= highCut) { hi = v; break; } }
+      if (hi > lo) {
+        const scale = 255 / (hi - lo);
+        for (let p = 0; p < n; p++) {
+          R[p] = clamp255((R[p] - lo) * scale);
+          G[p] = clamp255((G[p] - lo) * scale);
+          B[p] = clamp255((B[p] - lo) * scale);
+        }
+      }
+    }
+
+    for (let i = 0, p = 0; i < data.length; i += 4, p++) {
+      data[i] = R[p]; data[i + 1] = G[p]; data[i + 2] = B[p];
+    }
+    ctx.putImageData(imgData, 0, 0);
+    return canvas;
+  }
+
+  // ---------------------------------------------------------------
+  // File loading helpers
+  // ---------------------------------------------------------------
+  function loadImageFile(file){
+    return new Promise((resolve, reject) => {
+      const url = URL.createObjectURL(file);
+      const img = new Image();
+      img.onload = () => { resolve(img); URL.revokeObjectURL(url); };
+      img.onerror = reject;
+      img.src = url;
+    });
+  }
+
+  function scaleCanvas(canvas, factor){
+    if (!factor || factor === 1.0) return canvas;
+    const out = document.createElement('canvas');
+    out.width = Math.round(canvas.width * factor);
+    out.height = Math.round(canvas.height * factor);
+    const ctx = out.getContext('2d');
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(canvas, 0, 0, out.width, out.height);
+    return out;
+  }
+
+  // ---------------------------------------------------------------
+  // Main processing pipeline
+  // ---------------------------------------------------------------
+  let cancelRequested = false;
+
+  async function processFile(file, opts, onProgress){
+    const ext = file.name.split('.').pop().toLowerCase();
+    const isPdf = ext === 'pdf';
+    const pages = [];
+
+    if (isPdf) {
+      const buf = await file.arrayBuffer();
+      const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
+      const numPages = pdf.numPages;
+      for (let i = 1; i <= numPages; i++) {
+        if (cancelRequested) break;
+        const page = await pdf.getPage(i);
+        const unscaled = page.getViewport({ scale: 1 });
+        const renderScale = opts.dpi / 72;
+        const viewport = page.getViewport({ scale: renderScale });
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.round(viewport.width);
+        canvas.height = Math.round(viewport.height);
+        const ctx = canvas.getContext('2d');
+        await page.render({ canvasContext: ctx, viewport }).promise;
+
+        let angle = 0;
+        let working = canvas;
+        if (opts.deskew) {
+          angle = computeSkewAngleForCanvas(canvas);
+          working = rotateCanvasFull(canvas, angle);
+        }
+        working = scaleCanvas(working, opts.scale);
+        if (opts.enhance) working = enhanceCanvas(working, opts);
+
+        const dataUrl = working.toDataURL('image/jpeg', 0.92);
+        pages.push({ dataUrl, wPt: unscaled.width, hPt: unscaled.height, angle });
+        onProgress(i, numPages, angle, dataUrl);
+      }
+    } else {
+      const img = await loadImageFile(file);
+      const canvas = document.createElement('canvas');
+      canvas.width = img.naturalWidth;
+      canvas.height = img.naturalHeight;
+      canvas.getContext('2d').drawImage(img, 0, 0);
+
+      let angle = 0;
+      let working = canvas;
+      if (opts.deskew) {
+        angle = computeSkewAngleForCanvas(canvas);
+        working = rotateCanvasFull(canvas, angle);
+      }
+      working = scaleCanvas(working, opts.scale);
+      if (opts.enhance) working = enhanceCanvas(working, opts);
+
+      const dataUrl = working.toDataURL('image/jpeg', 0.95);
+      // convert pixel dimensions to PDF points using the assumed source DPI
+      // (using opts.dpi keeps this consistent with the DPI slider instead of
+      // treating raw pixel counts as points, which would produce a page the
+      // size of a billboard)
+      const ptScale = 72 / opts.dpi;
+      pages.push({
+        dataUrl,
+        wPt: working.width * ptScale,
+        hPt: working.height * ptScale,
+        angle,
+        isImage: true
+      });
+      onProgress(1, 1, angle, dataUrl);
+    }
+    return pages;
+  }
+
+  async function buildPdfBlob(pages, onStep){
+    const { jsPDF } = window.jspdf;
+    let pdf;
+    for (let i = 0; i < pages.length; i++) {
+      const p = pages[i];
+      if (!p || !p.dataUrl || !isFinite(p.wPt) || !isFinite(p.hPt) || p.wPt <= 0 || p.hPt <= 0) {
+        throw new Error('페이지 ' + (i + 1) + '의 이미지 데이터가 올바르지 않습니다.');
+      }
+      const orientation = p.wPt > p.hPt ? 'l' : 'p';
+      if (i === 0) {
+        pdf = new jsPDF({ unit: 'pt', format: [p.wPt, p.hPt], orientation, compress: true });
+      } else {
+        pdf.addPage([p.wPt, p.hPt], orientation);
+      }
+      pdf.addImage(p.dataUrl, 'JPEG', 0, 0, p.wPt, p.hPt, undefined, 'FAST');
+      // yield to the browser periodically on large documents so the tab
+      // doesn't appear to freeze and the UI can update
+      if (onStep) onStep(i + 1, pages.length);
+      if (i % 15 === 14) await new Promise((r) => setTimeout(r, 0));
+    }
+    return pdf;
+  }
+
+  function downloadBlob(blob, filename){
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 4000);
+  }
+
+  // ---------------------------------------------------------------
+  // UI wiring
+  // ---------------------------------------------------------------
+  const $ = (id) => document.getElementById(id);
+
+  const dropzone = $('dropzone');
+  const fileInput = $('fileInput');
+  const fileInfo = $('fileInfo');
+  const fileName = $('fileName');
+  const clearFileBtn = $('clearFile');
+  const settingsPanel = $('settingsPanel');
+  const progressPanel = $('progressPanel');
+  const resultPanel = $('resultPanel');
+  const errorBox = $('errorBox');
+  const startBtn = $('startBtn');
+  const cancelBtn = $('cancelBtn');
+  const thumbGrid = $('thumbGrid');
+  const barFill = $('barFill');
+  const statusText = $('statusText');
+  const countText = $('countText');
+  const downloadPdfBtn = $('downloadPdfBtn');
+  const downloadPngBtn = $('downloadPngBtn');
+
+  let selectedFile = null;
+  let processedPages = null;
+  let lastBaseName = 'output';
+
+  function showError(msg){
+    errorBox.textContent = msg;
+    errorBox.classList.add('show');
+  }
+  function clearError(){
+    errorBox.classList.remove('show');
+    errorBox.textContent = '';
+  }
+
+  function selectFile(file){
+    if (!file) return;
+    const ext = file.name.split('.').pop().toLowerCase();
+    if (!['pdf', 'png', 'jpg', 'jpeg'].includes(ext)) {
+      showError('지원하지 않는 파일 형식입니다. PDF, PNG, JPG 파일만 가능합니다.');
+      return;
+    }
+    clearError();
+    selectedFile = file;
+    fileName.textContent = file.name + '  ·  ' + (file.size / 1024 / 1024).toFixed(1) + 'MB';
+    fileInfo.classList.add('show');
+    settingsPanel.style.display = 'block';
+    resultPanel.classList.remove('show');
+    progressPanel.classList.remove('show');
+  }
+
+  dropzone.addEventListener('click', () => fileInput.click());
+  dropzone.addEventListener('dragover', (e) => { e.preventDefault(); dropzone.classList.add('drag'); });
+  dropzone.addEventListener('dragleave', () => dropzone.classList.remove('drag'));
+  dropzone.addEventListener('drop', (e) => {
+    e.preventDefault();
+    dropzone.classList.remove('drag');
+    if (e.dataTransfer.files && e.dataTransfer.files[0]) selectFile(e.dataTransfer.files[0]);
+  });
+  fileInput.addEventListener('change', (e) => {
+    if (e.target.files && e.target.files[0]) selectFile(e.target.files[0]);
+  });
+  clearFileBtn.addEventListener('click', () => {
+    selectedFile = null;
+    fileInput.value = '';
+    fileInfo.classList.remove('show');
+    settingsPanel.style.display = 'none';
+    progressPanel.classList.remove('show');
+    resultPanel.classList.remove('show');
+  });
+
+  // slider readouts
+  function bindSlider(sliderId, readoutId, fmt){
+    const el = $(sliderId), out = $(readoutId);
+    const update = () => { out.textContent = fmt(parseFloat(el.value)); };
+    el.addEventListener('input', update);
+    update();
+  }
+  bindSlider('optDpi', 'optDpiVal', (v) => String(v));
+  bindSlider('optScale', 'optScaleVal', (v) => v.toFixed(1) + '×');
+  bindSlider('optDenoise', 'optDenoiseVal', (v) => v.toFixed(1));
+  bindSlider('optClarity', 'optClarityVal', (v) => v.toFixed(1));
+  bindSlider('optSharpen', 'optSharpenVal', (v) => v.toFixed(1));
+
+  function currentOpts(){
+    return {
+      dpi: parseInt($('optDpi').value, 10),
+      scale: parseFloat($('optScale').value),
+      deskew: $('optDeskew').checked,
+      enhance: $('optEnhance').checked,
+      denoise: parseFloat($('optDenoise').value),
+      clarity: parseFloat($('optClarity').value),
+      sharpen: parseFloat($('optSharpen').value),
+      autoLevels: $('optAutoLevels').checked
+    };
+  }
+
+  startBtn.addEventListener('click', async () => {
+    if (!selectedFile) return;
+    if (!window.pdfjsLib || !window.jspdf) {
+      showError('필요한 라이브러리를 불러오지 못했습니다. 인터넷 연결을 확인한 뒤 새로고침해 주세요.');
+      return;
+    }
+    clearError();
+    cancelRequested = false;
+    settingsPanel.style.display = 'none';
+    resultPanel.classList.remove('show');
+    progressPanel.classList.add('show');
+    thumbGrid.innerHTML = '';
+    barFill.style.width = '0%';
+    statusText.textContent = '준비 중…';
+    countText.textContent = '0 / 0';
+
+    await workerReadyPromise;
+    statusText.textContent = '처리 중…';
+
+    const opts = currentOpts();
+    const t0 = performance.now();
+    let angleSum = 0, angleCount = 0;
+    lastBaseName = selectedFile.name.replace(/\.[^.]+$/, '') || 'output';
+
+    try {
+      const pages = await processFile(selectedFile, opts, (i, total, angle, dataUrl) => {
+        countText.textContent = i + ' / ' + total;
+        barFill.style.width = Math.round((i / total) * 100) + '%';
+        statusText.textContent = i + '번째 페이지 처리 완료';
+        angleSum += Math.abs(angle);
+        angleCount++;
+
+        const thumb = document.createElement('div');
+        thumb.className = 'thumb';
+        const img = document.createElement('img');
+        img.src = dataUrl;
+        const badge = document.createElement('div');
+        badge.className = 'badge' + (Math.abs(angle) >= 1 ? ' tilt' : '');
+        badge.textContent = (angle > 0 ? '+' : '') + angle.toFixed(2) + '°';
+        thumb.appendChild(img);
+        thumb.appendChild(badge);
+        thumbGrid.appendChild(thumb);
+        thumbGrid.scrollTop = thumbGrid.scrollHeight;
+      });
+
+      const elapsed = ((performance.now() - t0) / 1000);
+      processedPages = pages;
+
+      progressPanel.classList.remove('show');
+      resultPanel.classList.add('show');
+      $('statPages').textContent = String(pages.length);
+      $('statAngle').textContent = (angleCount ? (angleSum / angleCount) : 0).toFixed(2) + '°';
+      $('statTime').textContent = elapsed < 60
+        ? elapsed.toFixed(1) + 's'
+        : Math.floor(elapsed / 60) + 'm ' + Math.round(elapsed % 60) + 's';
+
+      downloadPngBtn.style.display = (pages.length === 1 && pages[0].isImage) ? 'inline-flex' : 'none';
+
+    } catch (err) {
+      console.error(err);
+      progressPanel.classList.remove('show');
+      settingsPanel.style.display = 'block';
+      showError('처리 중 오류가 발생했습니다: ' + (err && err.message ? err.message : String(err)));
+    }
+  });
+
+  cancelBtn.addEventListener('click', () => {
+    cancelRequested = true;
+    statusText.textContent = '취소 중…';
+  });
+
+  downloadPdfBtn.addEventListener('click', async () => {
+    if (!processedPages || !processedPages.length) return;
+    if (!window.jspdf) {
+      showError('PDF 라이브러리를 불러오지 못했습니다. 인터넷 연결을 확인한 뒤 새로고침해 주세요.');
+      return;
+    }
+    clearError();
+    const originalLabel = downloadPdfBtn.textContent;
+    downloadPdfBtn.disabled = true;
+    downloadPngBtn.disabled = true;
+    downloadPdfBtn.textContent = 'PDF 생성 중… 0%';
+
+    // let the "생성 중" label paint before the heavy synchronous work starts
+    await new Promise((r) => setTimeout(r, 30));
+
+    try {
+      const pdf = await buildPdfBlob(processedPages, (done, total) => {
+        downloadPdfBtn.textContent = 'PDF 생성 중… ' + Math.round((done / total) * 100) + '%';
+      });
+      const blob = pdf.output('blob');
+      if (!blob || blob.size === 0) {
+        throw new Error('생성된 PDF가 비어 있습니다.');
+      }
+      downloadBlob(blob, lastBaseName + '_보정.pdf');
+    } catch (err) {
+      console.error(err);
+      showError(
+        'PDF 다운로드 중 문제가 발생했습니다: ' + (err && err.message ? err.message : String(err)) +
+        ' — 페이지 수나 해상도(DPI)를 낮춰서 다시 시도해 보세요.'
+      );
+    } finally {
+      downloadPdfBtn.disabled = false;
+      downloadPngBtn.disabled = false;
+      downloadPdfBtn.textContent = originalLabel;
+    }
+  });
+
+  downloadPngBtn.addEventListener('click', () => {
+    if (!processedPages || !processedPages.length) return;
+    try {
+      const res = fetch(processedPages[0].dataUrl)
+        .then((r) => r.blob())
+        .then((blob) => downloadBlob(blob, lastBaseName + '_보정.jpg'))
+        .catch(() => {
+          // fallback for browsers where fetch() on a data: URL is restricted
+          const a = document.createElement('a');
+          a.href = processedPages[0].dataUrl;
+          a.download = lastBaseName + '_보정.jpg';
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+        });
+    } catch (err) {
+      console.error(err);
+      showError('이미지 다운로드 중 문제가 발생했습니다: ' + (err && err.message ? err.message : String(err)));
+    }
+  });
+
+})();
+</script>
+</body>
+</html>
