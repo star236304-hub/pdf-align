@@ -522,6 +522,9 @@
   const PDFJS_WORKER_URL = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
   if (window.pdfjsLib) {
     pdfjsLib.GlobalWorkerOptions.workerSrc = PDFJS_WORKER_URL;
+    pdfjsLib.disableAutoFetch = true;
+pdfjsLib.disableStream = true;
+pdfjsLib.disableRange = true;
   }
   const workerReadyPromise = Promise.resolve();
 
@@ -645,6 +648,10 @@
     ctx.rotate(angleDeg * Math.PI / 180);
     ctx.drawImage(canvas, -w / 2, -h / 2);
     ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.save?.();
+
+canvas.width = 1;
+canvas.height = 1;
     return out;
   }
 
