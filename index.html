@@ -269,6 +269,53 @@
   }
   .thumb .badge.tilt{ color: var(--amber); }
 
+  .review-grid{
+    display:grid;
+    grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+    gap: 12px;
+    max-height: 560px;
+    overflow-y:auto;
+    padding-right:4px;
+  }
+  .review-card{
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow:hidden;
+    background:#fff;
+  }
+  .review-card .thumb-wrap{
+    position:relative;
+    aspect-ratio: 3/4.2;
+    background: var(--bg);
+  }
+  .review-card .thumb-wrap img{ width:100%; height:100%; object-fit:contain; display:block; }
+  .review-card .idx-badge{
+    position:absolute; top:4px; left:4px;
+    font-family:'IBM Plex Mono', monospace;
+    font-size: 10px; font-weight:700;
+    padding: 1px 5px; border-radius:4px;
+    background: rgba(22,32,43,0.75); color:#fff;
+  }
+  .review-card .angle-badge{
+    position:absolute; top:4px; right:4px;
+    font-family:'IBM Plex Mono', monospace;
+    font-size: 9px; font-weight:600;
+    padding: 1px 4px; border-radius:4px;
+    background: rgba(255,255,255,0.92); color: var(--amber);
+  }
+  .review-card .ctrl-row{
+    display:grid;
+    grid-template-columns: repeat(5, 1fr);
+    border-top: 1px solid var(--border);
+  }
+  .review-card .ctrl-row button{
+    border:none; background:#fff; padding:8px 0; font-size:14px;
+    color: var(--accent-dark); cursor:pointer; border-right: 1px solid var(--border);
+  }
+  .review-card .ctrl-row button:last-child{ border-right:none; color: var(--danger); }
+  .review-card .ctrl-row button:disabled{ opacity:0.3; cursor:not-allowed; }
+  .review-card .ctrl-row button:active{ background: var(--accent-soft); }
+
   /* ---------- Result ---------- */
   #resultPanel{ display:none; }
   #resultPanel.show{ display:block; }
@@ -377,12 +424,51 @@
 
     <div class="row">
       <div>
+        <div class="label">가로/거꾸로 촬영 자동감지</div>
+        <span class="desc">페이지가 90도 옆으로 찍혔으면 자동으로 세워줍니다. 방향이 반대로 돌아가면 다음 단계에서 직접 버튼으로 고칠 수 있어요</span>
+      </div>
+      <div class="control">
+        <label class="switch">
+          <input type="checkbox" id="optAutoRotate" checked>
+          <span class="slider-toggle"></span>
+        </label>
+      </div>
+    </div>
+
+    <div class="row">
+      <div>
+        <div class="label">여백 자동 크롭</div>
+        <span class="desc">스캔 시 생기는 검은 테두리·여백을 자동으로 잘라냅니다</span>
+      </div>
+      <div class="control">
+        <label class="switch">
+          <input type="checkbox" id="optAutoCrop" checked>
+          <span class="slider-toggle"></span>
+        </label>
+      </div>
+    </div>
+
+    <div class="row">
+      <div>
         <div class="label">화질 개선</div>
         <span class="desc">노이즈 제거·명료도·선명화를 적용합니다</span>
       </div>
       <div class="control">
         <label class="switch">
           <input type="checkbox" id="optEnhance" checked>
+          <span class="slider-toggle"></span>
+        </label>
+      </div>
+    </div>
+
+    <div class="row">
+      <div>
+        <div class="label">흑백으로 저장</div>
+        <span class="desc">컬러가 필요 없는 텍스트 스캔이라면 파일 용량을 크게 줄일 수 있습니다</span>
+      </div>
+      <div class="control">
+        <label class="switch">
+          <input type="checkbox" id="optGrayscale">
           <span class="slider-toggle"></span>
         </label>
       </div>
@@ -479,9 +565,21 @@
     </div>
   </div>
 
-  <!-- Step 4: Result -->
+  <!-- Step 4: Review & edit -->
+  <div class="panel" id="reviewPanel" style="display:none;">
+    <h2><span class="idx">04</span> 미리보기 · 편집</h2>
+    <p style="font-size:12.5px; color:var(--muted); margin:-4px 0 14px;">
+      방향이 잘못됐거나 필요 없는 페이지가 있으면 여기서 바로 고치세요. ⟲⟳는 90도씩 회전, ✕는 삭제, ↑↓는 순서 변경입니다.
+    </p>
+    <div class="review-grid" id="reviewGrid"></div>
+    <div style="margin-top:16px;">
+      <button class="btn btn-primary" id="proceedBtn" style="width:100%;">다음: PDF 만들기</button>
+    </div>
+  </div>
+
+  <!-- Step 5: Result -->
   <div class="panel" id="resultPanel">
-    <h2><span class="idx">04</span> 완료</h2>
+    <h2><span class="idx">05</span> 완료</h2>
     <div class="stat-grid">
       <div class="stat"><span class="num mono" id="statPages">0</span><span class="lbl">페이지</span></div>
       <div class="stat"><span class="num mono" id="statAngle">0.0°</span><span class="lbl">평균 보정각</span></div>
@@ -591,6 +689,21 @@
     return variance / h;
   }
 
+  function colSumVariance(bin, w, h){
+    const sums = new Float64Array(w);
+    for (let x = 0; x < w; x++) {
+      let s = 0;
+      for (let y = 0; y < h; y++) s += bin[y * w + x];
+      sums[x] = s;
+    }
+    let mean = 0;
+    for (let x = 0; x < w; x++) mean += sums[x];
+    mean /= w;
+    let variance = 0;
+    for (let x = 0; x < w; x++) variance += (sums[x] - mean) * (sums[x] - mean);
+    return variance / w;
+  }
+
   function detectSkewAngle(bin, w, h, coarseRange, coarseStep, fineStep){
     coarseRange = coarseRange || 8;
     coarseStep = coarseStep || 0.5;
@@ -610,8 +723,11 @@
     return Math.round(bestAngle * 100) / 100;
   }
 
-  function computeSkewAngleForCanvas(canvas){
-    const maxDim = 500;
+  // Downscales a canvas and Otsu-binarizes it. Shared by skew detection,
+  // coarse-rotation detection, and margin/content bbox detection so the
+  // three features stay consistent and we only pay the downscale cost once
+  // per concern.
+  function getDownscaledBinary(canvas, maxDim){
     const w0 = canvas.width, h0 = canvas.height;
     const scale = Math.min(1, maxDim / Math.max(w0, h0));
     const sw = Math.max(1, Math.round(w0 * scale));
@@ -635,8 +751,27 @@
     for (let i = 0; i < gray.length; i++) {
       if (gray[i] <= threshold) { bin[i] = 1; fgCount++; }
     }
+    return { bin, w: sw, h: sh, scaleX: w0 / sw, scaleY: h0 / sh, fgCount, total };
+  }
+
+  function computeSkewAngleForCanvas(canvas){
+    const { bin, w, h, fgCount, total } = getDownscaledBinary(canvas, 500);
     if (fgCount < Math.max(150, total * 0.003)) return 0; // sparse page guard
-    return detectSkewAngle(bin, sw, sh);
+    return detectSkewAngle(bin, w, h);
+  }
+
+  // Row-sum variance can only ever tell us the AXIS of the text (whether
+  // lines run horizontally or vertically) — reversing row order doesn't
+  // change variance, so it's mathematically impossible to distinguish
+  // 0°/180° or 90°/270° from this signal alone. We use it to confidently
+  // detect "this page is sideways" and always correct with one clockwise
+  // turn; the manual rotate buttons in the review step cover the rest.
+  function needsQuarterTurn(canvas){
+    const { bin, w, h, fgCount, total } = getDownscaledBinary(canvas, 400);
+    if (fgCount < Math.max(150, total * 0.003)) return false;
+    const rv = rowSumVariance(bin, w, h);
+    const cv = colSumVariance(bin, w, h);
+    return cv > rv * 1.5;
   }
 
   function rotateCanvasFull(canvas, angleDeg){
@@ -652,6 +787,84 @@
     ctx.drawImage(canvas, -w / 2, -h / 2);
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     return out;
+  }
+
+  // Rotates a canvas by a multiple of 90°, clockwise. Used both for the
+  // automatic sideways-photo correction and for the manual per-page rotate
+  // buttons in the review step.
+  function rotateCanvas90(canvas, quarterTurns){
+    const q = ((quarterTurns % 4) + 4) % 4;
+    if (q === 0) return canvas;
+    const w = canvas.width, h = canvas.height;
+    const out = document.createElement('canvas');
+    if (q === 1 || q === 3) { out.width = h; out.height = w; } else { out.width = w; out.height = h; }
+    const ctx = out.getContext('2d');
+    ctx.save();
+    if (q === 1) { ctx.translate(out.width, 0); ctx.rotate(Math.PI / 2); }
+    else if (q === 2) { ctx.translate(out.width, out.height); ctx.rotate(Math.PI); }
+    else if (q === 3) { ctx.translate(0, out.height); ctx.rotate(-Math.PI / 2); }
+    ctx.drawImage(canvas, 0, 0);
+    ctx.restore();
+    return out;
+  }
+
+  // Finds the bounding box of actual page content (ignoring blank scanner
+  // margins) and returns it in FULL-resolution pixel coordinates, or null
+  // if cropping wouldn't help (blank-ish page, or content already fills
+  // almost the whole page).
+  function detectContentBBox(canvas, marginFrac){
+    marginFrac = marginFrac == null ? 0.015 : marginFrac;
+    const { bin, w, h, scaleX, scaleY, fgCount, total } = getDownscaledBinary(canvas, 500);
+    if (fgCount < Math.max(150, total * 0.003)) return null;
+
+    const rowThresh = Math.max(1, w * 0.003);
+    const colThresh = Math.max(1, h * 0.003);
+
+    function rowSum(y){ let s = 0; const base = y * w; for (let x = 0; x < w; x++) s += bin[base + x]; return s; }
+    function colSum(x){ let s = 0; for (let y = 0; y < h; y++) s += bin[y * w + x]; return s; }
+
+    let top = 0, bottom = h - 1, left = 0, right = w - 1;
+    while (top < h && rowSum(top) <= rowThresh) top++;
+    while (bottom >= 0 && rowSum(bottom) <= rowThresh) bottom--;
+    while (left < w && colSum(left) <= colThresh) left++;
+    while (right >= 0 && colSum(right) <= colThresh) right--;
+    if (top >= bottom || left >= right) return null;
+
+    const padY = Math.round(h * marginFrac), padX = Math.round(w * marginFrac);
+    top = Math.max(0, top - padY); bottom = Math.min(h - 1, bottom + padY);
+    left = Math.max(0, left - padX); right = Math.min(w - 1, right + padX);
+
+    const fx0 = Math.floor(left * scaleX), fy0 = Math.floor(top * scaleY);
+    const fx1 = Math.min(canvas.width, Math.ceil((right + 1) * scaleX));
+    const fy1 = Math.min(canvas.height, Math.ceil((bottom + 1) * scaleY));
+
+    const cropArea = (fx1 - fx0) * (fy1 - fy0);
+    const fullArea = canvas.width * canvas.height;
+    if (cropArea > fullArea * 0.97) return null; // nothing meaningful to crop
+    if (cropArea < fullArea * 0.10) return null; // likely a detection failure, don't over-crop
+
+    return { x: fx0, y: fy0, w: fx1 - fx0, h: fy1 - fy0 };
+  }
+
+  function cropCanvasToBBox(canvas, bbox){
+    const out = document.createElement('canvas');
+    out.width = bbox.w; out.height = bbox.h;
+    const ctx = out.getContext('2d');
+    ctx.drawImage(canvas, bbox.x, bbox.y, bbox.w, bbox.h, 0, 0, bbox.w, bbox.h);
+    return out;
+  }
+
+  function applyGrayscale(canvas){
+    const w = canvas.width, h = canvas.height;
+    const ctx = canvas.getContext('2d');
+    const imgData = ctx.getImageData(0, 0, w, h);
+    const data = imgData.data;
+    for (let i = 0; i < data.length; i += 4) {
+      const luma = (0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2]) | 0;
+      data[i] = luma; data[i + 1] = luma; data[i + 2] = luma;
+    }
+    ctx.putImageData(imgData, 0, 0);
+    return canvas;
   }
 
   // ---------------------------------------------------------------
@@ -847,15 +1060,31 @@
 
           let angle = 0;
           let working = canvas;
+          let wPt = unscaled.width, hPt = unscaled.height;
+
+          if (opts.autoRotate && needsQuarterTurn(working)) {
+            working = rotateCanvas90(working, 1);
+            const tmp = wPt; wPt = hPt; hPt = tmp;
+          }
           if (opts.deskew) {
-            angle = computeSkewAngleForCanvas(canvas);
-            working = rotateCanvasFull(canvas, angle);
+            angle = computeSkewAngleForCanvas(working);
+            working = rotateCanvasFull(working, angle);
+          }
+          if (opts.autoCrop) {
+            const bbox = detectContentBBox(working);
+            if (bbox) {
+              const fullW = working.width, fullH = working.height;
+              working = cropCanvasToBBox(working, bbox);
+              wPt *= working.width / fullW;
+              hPt *= working.height / fullH;
+            }
           }
           working = scaleCanvas(working, opts.scale);
           if (opts.enhance) working = enhanceCanvas(working, opts);
+          if (opts.grayscale) working = applyGrayscale(working);
 
           const dataUrl = working.toDataURL('image/jpeg', 0.92);
-          pages.push({ dataUrl, wPt: unscaled.width, hPt: unscaled.height, angle });
+          pages.push({ dataUrl, wPt, hPt, angle });
           onProgress(i, numPages, angle, dataUrl);
         } catch (pageErr) {
           throw new Error(i + '번째 페이지 처리 중 실패 — ' + describeError(pageErr));
@@ -868,26 +1097,36 @@
 
       let angle = 0;
       let working = canvas;
-      if (opts.deskew) {
-        angle = computeSkewAngleForCanvas(canvas);
-        working = rotateCanvasFull(canvas, angle);
-      }
-      working = scaleCanvas(working, opts.scale);
-      if (opts.enhance) working = enhanceCanvas(working, opts);
-
-      const dataUrl = working.toDataURL('image/jpeg', 0.95);
       // convert pixel dimensions to PDF points using the assumed source DPI
       // (using opts.dpi keeps this consistent with the DPI slider instead of
       // treating raw pixel counts as points, which would produce a page the
       // size of a billboard)
-      const ptScale = 72 / opts.dpi;
-      pages.push({
-        dataUrl,
-        wPt: working.width * ptScale,
-        hPt: working.height * ptScale,
-        angle,
-        isImage: true
-      });
+      const ptScale0 = 72 / opts.dpi;
+      let wPt = working.width * ptScale0, hPt = working.height * ptScale0;
+
+      if (opts.autoRotate && needsQuarterTurn(working)) {
+        working = rotateCanvas90(working, 1);
+        const tmp = wPt; wPt = hPt; hPt = tmp;
+      }
+      if (opts.deskew) {
+        angle = computeSkewAngleForCanvas(working);
+        working = rotateCanvasFull(working, angle);
+      }
+      if (opts.autoCrop) {
+        const bbox = detectContentBBox(working);
+        if (bbox) {
+          const fullW = working.width, fullH = working.height;
+          working = cropCanvasToBBox(working, bbox);
+          wPt *= working.width / fullW;
+          hPt *= working.height / fullH;
+        }
+      }
+      working = scaleCanvas(working, opts.scale);
+      if (opts.enhance) working = enhanceCanvas(working, opts);
+      if (opts.grayscale) working = applyGrayscale(working);
+
+      const dataUrl = working.toDataURL('image/jpeg', 0.95);
+      pages.push({ dataUrl, wPt, hPt, angle, isImage: true });
       onProgress(1, 1, angle, dataUrl);
     }
     return pages;
@@ -939,6 +1178,9 @@
   const clearFileBtn = $('clearFile');
   const settingsPanel = $('settingsPanel');
   const progressPanel = $('progressPanel');
+  const reviewPanel = $('reviewPanel');
+  const reviewGrid = $('reviewGrid');
+  const proceedBtn = $('proceedBtn');
   const resultPanel = $('resultPanel');
   const errorBox = $('errorBox');
   const startBtn = $('startBtn');
@@ -953,6 +1195,7 @@
   let selectedFile = null;
   let processedPages = null;
   let lastBaseName = 'output';
+  let lastProcessingElapsed = 0;
 
   function describeError(err){
     if (!err) return '알 수 없는 오류';
@@ -1023,6 +1266,7 @@
     fileInfo.classList.add('show');
     settingsPanel.style.display = 'block';
     resultPanel.classList.remove('show');
+    reviewPanel.style.display = 'none';
     progressPanel.classList.remove('show');
   }
 
@@ -1043,6 +1287,7 @@
     fileInfo.classList.remove('show');
     settingsPanel.style.display = 'none';
     progressPanel.classList.remove('show');
+    reviewPanel.style.display = 'none';
     resultPanel.classList.remove('show');
   });
 
@@ -1064,7 +1309,10 @@
       dpi: parseInt($('optDpi').value, 10),
       scale: parseFloat($('optScale').value),
       deskew: $('optDeskew').checked,
+      autoRotate: $('optAutoRotate').checked,
+      autoCrop: $('optAutoCrop').checked,
       enhance: $('optEnhance').checked,
+      grayscale: $('optGrayscale').checked,
       denoise: parseFloat($('optDenoise').value),
       clarity: parseFloat($('optClarity').value),
       sharpen: parseFloat($('optSharpen').value),
@@ -1082,6 +1330,7 @@
     cancelRequested = false;
     settingsPanel.style.display = 'none';
     resultPanel.classList.remove('show');
+    reviewPanel.style.display = 'none';
     progressPanel.classList.add('show');
     thumbGrid.innerHTML = '';
     barFill.style.width = '0%';
@@ -1125,16 +1374,11 @@
 
       const elapsed = ((performance.now() - t0) / 1000);
       processedPages = pages;
+      lastProcessingElapsed = elapsed;
 
       progressPanel.classList.remove('show');
-      resultPanel.classList.add('show');
-      $('statPages').textContent = String(pages.length);
-      $('statAngle').textContent = (angleCount ? (angleSum / angleCount) : 0).toFixed(2) + '°';
-      $('statTime').textContent = elapsed < 60
-        ? elapsed.toFixed(1) + 's'
-        : Math.floor(elapsed / 60) + 'm ' + Math.round(elapsed % 60) + 's';
-
-      downloadPngBtn.style.display = (pages.length === 1 && pages[0].isImage) ? 'inline-flex' : 'none';
+      reviewPanel.style.display = 'block';
+      renderReviewGrid();
 
     } catch (err) {
       console.error(err);
@@ -1147,6 +1391,142 @@
   cancelBtn.addEventListener('click', () => {
     cancelRequested = true;
     statusText.textContent = '취소 중…';
+  });
+
+  // ---------------------------------------------------------------
+  // Review & edit step: rotate / delete / reorder pages before the
+  // final PDF is built. Pages are edited in place on `processedPages`
+  // so buildPdfBlob() picks up whatever the user left behind.
+  // ---------------------------------------------------------------
+  function rotateDataUrl(dataUrl, quarterTurns){
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => {
+        try {
+          const src = document.createElement('canvas');
+          src.width = img.naturalWidth;
+          src.height = img.naturalHeight;
+          src.getContext('2d').drawImage(img, 0, 0);
+          const rotated = rotateCanvas90(src, quarterTurns);
+          resolve(rotated.toDataURL('image/jpeg', 0.92));
+        } catch (e) { reject(e); }
+      };
+      img.onerror = () => reject(new Error('이미지를 다시 불러오지 못했습니다.'));
+      img.src = dataUrl;
+    });
+  }
+
+  function renderReviewGrid(){
+    reviewGrid.innerHTML = '';
+    if (!processedPages || !processedPages.length) {
+      reviewGrid.innerHTML = '<p style="color:var(--muted); font-size:13px;">남은 페이지가 없습니다.</p>';
+      proceedBtn.disabled = true;
+      return;
+    }
+    proceedBtn.disabled = false;
+
+    processedPages.forEach((p, i) => {
+      const card = document.createElement('div');
+      card.className = 'review-card';
+
+      const thumbWrap = document.createElement('div');
+      thumbWrap.className = 'thumb-wrap';
+      const img = document.createElement('img');
+      img.src = p.dataUrl;
+      const idxBadge = document.createElement('div');
+      idxBadge.className = 'idx-badge';
+      idxBadge.textContent = String(i + 1);
+      thumbWrap.appendChild(img);
+      thumbWrap.appendChild(idxBadge);
+      if (Math.abs(p.angle || 0) >= 1) {
+        const angleBadge = document.createElement('div');
+        angleBadge.className = 'angle-badge';
+        angleBadge.textContent = (p.angle > 0 ? '+' : '') + p.angle.toFixed(1) + '°';
+        thumbWrap.appendChild(angleBadge);
+      }
+      card.appendChild(thumbWrap);
+
+      const ctrlRow = document.createElement('div');
+      ctrlRow.className = 'ctrl-row';
+
+      function makeBtn(label, title, onClick, disabled){
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.textContent = label;
+        b.title = title;
+        b.disabled = !!disabled;
+        b.addEventListener('click', onClick);
+        return b;
+      }
+
+      const rotateCCWBtn = makeBtn('⟲', '왼쪽으로 90도 회전', async () => {
+        await applyPageRotation(i, 3);
+      });
+      const rotateCWBtn = makeBtn('⟳', '오른쪽으로 90도 회전', async () => {
+        await applyPageRotation(i, 1);
+      });
+      const upBtn = makeBtn('↑', '앞으로 이동', () => {
+        if (i === 0) return;
+        const tmp = processedPages[i - 1];
+        processedPages[i - 1] = processedPages[i];
+        processedPages[i] = tmp;
+        renderReviewGrid();
+      }, i === 0);
+      const downBtn = makeBtn('↓', '뒤로 이동', () => {
+        if (i === processedPages.length - 1) return;
+        const tmp = processedPages[i + 1];
+        processedPages[i + 1] = processedPages[i];
+        processedPages[i] = tmp;
+        renderReviewGrid();
+      }, i === processedPages.length - 1);
+      const delBtn = makeBtn('✕', '이 페이지 삭제', () => {
+        processedPages.splice(i, 1);
+        renderReviewGrid();
+      });
+
+      ctrlRow.appendChild(rotateCCWBtn);
+      ctrlRow.appendChild(rotateCWBtn);
+      ctrlRow.appendChild(upBtn);
+      ctrlRow.appendChild(downBtn);
+      ctrlRow.appendChild(delBtn);
+      card.appendChild(ctrlRow);
+
+      reviewGrid.appendChild(card);
+    });
+  }
+
+  async function applyPageRotation(index, quarterTurns){
+    const p = processedPages[index];
+    if (!p) return;
+    try {
+      const newDataUrl = await rotateDataUrl(p.dataUrl, quarterTurns);
+      p.dataUrl = newDataUrl;
+      if (quarterTurns % 2 !== 0) {
+        const tmp = p.wPt; p.wPt = p.hPt; p.hPt = tmp;
+      }
+      renderReviewGrid();
+    } catch (err) {
+      console.error(err);
+      showError('페이지 회전 중 문제가 발생했습니다: ' + describeError(err));
+    }
+  }
+
+  proceedBtn.addEventListener('click', () => {
+    if (!processedPages || !processedPages.length) {
+      showError('PDF에 포함할 페이지가 없습니다. 최소 한 페이지는 남겨주세요.');
+      return;
+    }
+    let angleSum = 0;
+    processedPages.forEach((p) => { angleSum += Math.abs(p.angle || 0); });
+
+    reviewPanel.style.display = 'none';
+    resultPanel.classList.add('show');
+    $('statPages').textContent = String(processedPages.length);
+    $('statAngle').textContent = (angleSum / processedPages.length).toFixed(2) + '°';
+    $('statTime').textContent = lastProcessingElapsed < 60
+      ? lastProcessingElapsed.toFixed(1) + 's'
+      : Math.floor(lastProcessingElapsed / 60) + 'm ' + Math.round(lastProcessingElapsed % 60) + 's';
+    downloadPngBtn.style.display = (processedPages.length === 1 && processedPages[0].isImage) ? 'inline-flex' : 'none';
   });
 
   const downloadPdfLink = $('downloadPdfLink');
